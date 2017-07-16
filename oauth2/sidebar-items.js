@@ -1,0 +1,1 @@
+initSidebarItems({"enum":[["ErrorType",""],["ResponseType",""]],"struct":[["Config","Configuration of an oauth2 application."],["Token",""],["TokenError",""]]});
