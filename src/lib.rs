@@ -263,7 +263,10 @@ fn block_on<F>(future: F) -> Result<F::Item, F::Error>
 where
     F: Future,
 {
-    let mut r = ::tokio::runtime::current_thread::Runtime::new().expect("failed to start runtime on current thread");
+    let mut r =
+        ::tokio::runtime::current_thread::Runtime::new().expect(
+            "failed to start runtime on current thread"
+        );
     r.block_on(future)
 }
 
@@ -991,7 +994,7 @@ impl<EF: ExtraTokenFields + Send + 'static, TT: TokenType + Send + 'static, TE: 
                 .get(::reqwest::header::CONTENT_TYPE)
                 .map(Clone::clone);
             res.into_body().concat2().and_then(move |body| {
-                future::ok(RequestTokenResponse {
+                Ok(RequestTokenResponse {
                     http_status,
                     content_type,
                     response_body: body.to_vec(),
@@ -1015,65 +1018,72 @@ impl<EF: ExtraTokenFields + Send + 'static, TT: TokenType + Send + 'static, TE: 
         }
         let token_url = self.token_url.as_ref().unwrap();
         let fut = self.post_request_token(token_url, params).map_err(RequestTokenError::Request)
-        .and_then(|token_response|{
-            if token_response.http_status != 200 {
-                let reason = String::from_utf8_lossy(token_response.response_body.as_slice());
-                if reason.is_empty() {
-                    return future::err(
-                        RequestTokenError::Other("Server returned empty error response".to_string())
-                    );
-                }
-                let error = match serde_json::from_str::<ErrorResponse<TE>>(&reason) {
-                    Ok(error) => RequestTokenError::ServerResponse(error),
-                    Err(error) => RequestTokenError::Parse(error),
-                };
-                return future::err(error);
-            }
-
-            // Validate that the response Content-Type is JSON.
-            if let Some(content_type) = token_response.content_type {
-                // Section 3.1.1.1 of RFC 7231 indicates that media types are case insensitive and
-                // may be followed by optional whitespace and/or a parameter (e.g., charset).
-                // See https://tools.ietf.org/html/rfc7231#section-3.1.1.1.
-                match content_type.to_str() {
-                    Err(_) => {
-                        return future::err(
+            .and_then(|token_response| {
+                if token_response.http_status != 200 {
+                    let reason = String::from_utf8_lossy(token_response.response_body.as_slice());
+                    if reason.is_empty() {
+                        return Err(
                             RequestTokenError::Other(
-                                "Unexpected response Content-Type contains non-ASCII chars".to_string()
+                                "Server returned empty error response".to_string()
                             )
                         );
-                    },
-                    Ok(content_type) => {
-                        if !content_type.to_lowercase().starts_with(CONTENT_TYPE_JSON) {
-                            return future::err(
+                    } else {
+                        let error = match serde_json::from_str::<ErrorResponse<TE>>(&reason) {
+                            Ok(error) => RequestTokenError::ServerResponse(error),
+                            Err(error) => RequestTokenError::Parse(error),
+                        };
+                        return Err(error);
+                    }
+                }
+
+                // Validate that the response Content-Type is JSON.
+                token_response
+                    .content_type
+                    .map_or(Ok(()), |content_type| {
+                        let content_type_str =
+                            content_type
+                                .to_str()
+                                .map_err(|to_str_err|
+                                    RequestTokenError::Other(
+                                        format!(
+                                            "Unexpected response Content-Type contains non-ASCII \
+                                             chars: {}",
+                                            to_str_err
+                                        )
+                                    )
+                                )?;
+                        // Section 3.1.1.1 of RFC 7231 indicates that media types are case insensitive and
+                        // may be followed by optional whitespace and/or a parameter (e.g., charset).
+                        // See https://tools.ietf.org/html/rfc7231#section-3.1.1.1.
+                        if !content_type_str.to_lowercase().starts_with(CONTENT_TYPE_JSON) {
+                            Err(
                                 RequestTokenError::Other(
                                     format!(
                                         "Unexpected response Content-Type: `{}`, should be `{}`",
-                                        content_type,
+                                        content_type_str,
                                         CONTENT_TYPE_JSON
                                     )
                                 )
-                            );
+                            )
+                        } else {
+                            Ok(())
                         }
-                    }
+                    })?;
+
+                if token_response.response_body.is_empty() {
+                    Err(RequestTokenError::Other("Server returned empty response body".to_string()))
+                } else {
+                    let response_body =
+                        String::from_utf8(token_response.response_body)
+                            .map_err(|parse_error|
+                                RequestTokenError::Other(
+                                    format!("Couldn't parse response as UTF-8: {}", parse_error)
+                                )
+                            )?;
+                    TokenResponse::from_json(&response_body).map_err(RequestTokenError::Parse)
                 }
             }
-
-            if token_response.response_body.is_empty() {
-                return future::err(RequestTokenError::Other("Server returned empty response body".to_string()));
-            }
-
-            match String::from_utf8(token_response.response_body){
-                Err(parse_error) => {
-                    return future::err(RequestTokenError::Other(
-                        format!("Couldn't parse response as UTF-8: {}", parse_error)
-                    ));
-                },
-                Ok(response_body) => {
-                    return future::result(TokenResponse::from_json(&response_body).map_err(RequestTokenError::Parse));
-                },
-            }
-        });
+        );
         return future::Either::B(fut);
     }
 }
