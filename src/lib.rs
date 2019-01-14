@@ -1199,7 +1199,7 @@ pub struct TokenResponse<EF: ExtraTokenFields, TT: TokenType> {
     access_token: AccessToken,
     #[serde(bound = "TT: TokenType")]
     #[serde(deserialize_with = "helpers::deserialize_untagged_enum_case_insensitive")]
-    token_type: TT,
+    token_type: Option<TT>,
     #[serde(skip_serializing_if = "Option::is_none")]
     expires_in: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1225,7 +1225,7 @@ impl<EF: ExtraTokenFields, TT: TokenType> TokenResponse<EF, TT> {
     /// [Section 7.1](https://tools.ietf.org/html/rfc6749#section-7.1).
     /// Value is case insensitive and deserialized to the generic `TokenType` parameter.
     ///
-    pub fn token_type(&self) -> &TT { &self.token_type }
+    pub fn token_type(&self) -> Option<&TT> { self.token_type.as_ref() }
     ///
     /// RECOMMENDED. The lifetime in seconds of the access token. For example, the value 3600
     /// denotes that the access token will expire in one hour from the time the response was
